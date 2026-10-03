@@ -1,0 +1,12 @@
+{
+ "freq_ghz": 1.0,
+ "ntt_bfly_per_cycle": 512,
+ "mac_lanes": 2048,
+ "auto_words_per_cycle": 1024,
+ "sram_gbps": 20000.0,
+ "hbm_gbps": 2000.0,
+ "hbm_chunk_bytes": 4194304,
+ "window": 4,
+ "clock": 1.0,
+ "spad_capacity": 442499072
+}

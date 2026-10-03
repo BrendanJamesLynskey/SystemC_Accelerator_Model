@@ -1,0 +1,79 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+env:
+  SYSTEMC_VERSION: 3.0.2
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        config:
+          - { name: release, flags: "-DCMAKE_BUILD_TYPE=Release" }
+          - { name: asan-ubsan, flags: "-DCMAKE_BUILD_TYPE=RelWithDebInfo -DACCEL_SANITIZE=ON" }
+    name: ${{ matrix.config.name }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Cache SystemC
+        id: cache-systemc
+        uses: actions/cache@v4
+        with:
+          path: ~/systemc
+          key: systemc-${{ env.SYSTEMC_VERSION }}-ubuntu-24.04
+      - name: Build SystemC from source
+        if: steps.cache-systemc.outputs.cache-hit != 'true'
+        run: |
+          curl -sL https://github.com/accellera-official/systemc/archive/refs/tags/${SYSTEMC_VERSION}.tar.gz | tar xz
+          cmake -S systemc-${SYSTEMC_VERSION} -B sc-build -DCMAKE_BUILD_TYPE=Release -DCMAKE_CXX_STANDARD=17 \
+                -DCMAKE_INSTALL_PREFIX=$HOME/systemc -DBUILD_SHARED_LIBS=ON
+          cmake --build sc-build -j4 && cmake --install sc-build
+      - name: Configure
+        run: cmake -S . -B build ${{ matrix.config.flags }} -DCMAKE_PREFIX_PATH=$HOME/systemc
+      - name: Build (-Wall -Wextra -Wpedantic)
+        run: cmake --build build -j4
+      - name: GoogleTest (the SystemC model against SimPy's recorded answers)
+        run: LD_LIBRARY_PATH=$HOME/systemc/lib ctest --test-dir build --output-on-failure
+      - name: Run the ARK bootstrap, AT and LT
+        run: |
+          export LD_LIBRARY_PATH=$HOME/systemc/lib
+          ./build/accel_sim --trace tests/data/boot_ark/trace.json --hw tests/data/boot_ark/hw.json > at.json
+          ./build/accel_sim --trace tests/data/boot_ark/trace.json --hw tests/data/boot_ark/hw.json --style lt --quantum-ns 10000 > lt.json
+          python3 -c "import json; print(json.load(open('at.json'))['horizon_s'], json.load(open('lt.json'))['horizon_s'])"
+
+  agreement-with-current-simpy:
+    runs-on: ubuntu-24.04
+    needs: build-and-test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Restore SystemC
+        uses: actions/cache@v4
+        with:
+          path: ~/systemc
+          key: systemc-${{ env.SYSTEMC_VERSION }}-ubuntu-24.04
+      - name: Build
+        run: |
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DACCEL_TESTS=OFF -DCMAKE_PREFIX_PATH=$HOME/systemc
+          cmake --build build -j4
+      - name: Export fresh cases from FHE_Accelerator_Sim and compare
+        run: |
+          pip install "fhe-sim @ git+https://github.com/BrendanJamesLynskey/FHE_Accelerator_Sim"
+          export LD_LIBRARY_PATH=$HOME/systemc/lib
+          for opt in "" "--opts min_ks,seeded_keys,otf_plaintexts" "--hw small"; do
+            python tools/export_case.py case $opt
+            ./build/accel_sim --trace case/trace.json --hw case/hw.json --out r.json > /dev/null
+            python -c "
+          import json
+          e, r = json.load(open('case/expected.json')), json.load(open('r.json'))
+          d = max(abs(a - b) for a, b in zip(r['op_end'], e['op_end']))
+          print(e['horizon_s'], r['horizon_s'], d)
+          assert abs(r['horizon_s'] / e['horizon_s'] - 1) < 1e-12 and d < 1e-12
+          "
+          done
