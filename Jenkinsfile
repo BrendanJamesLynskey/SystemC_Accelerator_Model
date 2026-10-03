@@ -1,6 +1,6 @@
 // Jenkins pipeline for SystemC_Accelerator_Model.
 //
-// Stages: configure and build (Release, -Wall -Wextra -Wpedantic) -> GoogleTest with
+// Stages: clean old reports -> configure and build (Release, -Wall -Wextra -Wpedantic) -> GoogleTest with
 // JUnit output -> an ASan + UBSan build and test run -> agreement with the current SimPy
 // model on freshly exported cases -> a wall-clock gate (AT and LT on four bootstraps)
 // against ci/perf_baseline.json -> results.md -> an optional nightly LT quantum sweep.
@@ -29,6 +29,15 @@ pipeline {
     }
 
     stages {
+        // The workspace is reused between builds (it keeps the virtualenv and build caches), so
+        // delete the previous build's reports first. Without this a build that fails before its
+        // tests run publishes the last build's JUnit results as its own (Rust_DES_Kernel #4 did).
+        stage('Clean reports') {
+            steps {
+                sh 'rm -f gtest-*.xml perf_report.md sweep.csv'
+            }
+        }
+
         stage('Build') {
             steps {
                 sh(env.SCENV + '''
