@@ -43,6 +43,9 @@ pipeline {
                 sh(env.SCENV + '''
                     python3 -m venv .venv
                     .venv/bin/pip install -q cmake "fhe-sim @ git+https://github.com/BrendanJamesLynskey/FHE_Accelerator_Sim"
+                    # pip keeps an installed git dependency whose version number has not changed, so
+                    # fetch FHE_Accelerator_Sim's current commit every time.
+                    .venv/bin/pip install -q --force-reinstall --no-deps "fhe-sim @ git+https://github.com/BrendanJamesLynskey/FHE_Accelerator_Sim"
                     .venv/bin/cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_PREFIX_PATH=$SYSTEMC_HOME
                     .venv/bin/cmake --build build -j2
                 ''')
